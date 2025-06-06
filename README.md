@@ -60,5 +60,5 @@ Updated the `sed` on the `LOG_TEXT` line to:
 sed -E 's/\[(error|crit)\] [0-9]+#[0-9]+: \*[0-9]+ //'
 ```
 
-## :page_facing_up: License:
+## :page_facing_up: License
 MIT License
