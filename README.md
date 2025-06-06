@@ -5,7 +5,7 @@ This is a lightweight bash script designed to parse Nginx's ModSecurity logs, ge
 
 ---
 
-## :gear: Features:
+## :gear: Features
 
 **Generate an HTML report** with:
 - Statistics on event frequency.
