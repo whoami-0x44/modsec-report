@@ -188,11 +188,9 @@ EOF
                     } else if (p < 10) {
                         w = 25;
                     } else if (p < 15) {
-                        w = 30;
-                    } else if (p < 20) {
-                        w = 35;
+                        w = 28;
                     } else {
-                        w = int(p + 0.5);
+                        w = int(30 + (p - 20) * 0.5);
                     }
 
                     # Increase saturation with percent (max 80%)
