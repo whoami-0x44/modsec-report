@@ -9,14 +9,14 @@ HTML=/tmp/modsec_report.html
 
 # Extract and clean relevant ModSecurity log lines for the target date
 LOG_LINES=$(grep "$DATE" $ERROR_LOG 2>/dev/null | \
-    grep -E 'ModSecurity' | \
-    sed -e 's/\[file.*\[line "[0-9]*"\][[:space:]]*//g' \
-        -e 's/\[rev "[0-9]*"\][[:space:]]*//g' \
-        -e 's/\[data "[0-9\.]*"\].*\[accuracy "[0-9]*"\]//g' \
-        -e 's/\[hostname ".*"\]//g' \
-        -e 's/\[tag "[^"]*"\]//g' \
-        -e 's/\[ref "[^"]*"\]//g' \
-        -e 's/[[:space:]]*,[[:space:]]*\(client\|server\|referrer\):[^,]*//g')
+            grep -E 'ModSecurity' | \
+            sed -e 's/\[file.*\[line "[0-9]*"\][[:space:]]*//g' \
+                -e 's/\[rev "[0-9]*"\][[:space:]]*//g' \
+                -e 's/\[data "[0-9\.]*"\].*\[accuracy "[0-9]*"\]//g' \
+                -e 's/\[hostname ".*"\]//g' \
+                -e 's/\[tag "[^"]*"\]//g' \
+                -e 's/\[ref "[^"]*"\]//g' \
+                -e 's/[[:space:]]*,[[:space:]]*\(client\|server\|referrer\):[^,]*//g')
 
 # Exit if no log lines found
 if [ -z "$LOG_LINES" ]; then
@@ -24,12 +24,13 @@ if [ -z "$LOG_LINES" ]; then
 fi
 
 # Initialize associative arrays for counting
-declare -A COUNT_BY_ID_MSG
-declare -A MSG_ORIG
+declare -A UNIQUE_COMBO         # To store unique ID+IP keys
+declare -A UNIQUE_COUNT_BY_ID   # Final count per ID
+declare -A MSG_ORIG             # Original messages per ID
 TOTAL=0
 TABLE_ROWS=""
 
-# Parse log lines to extract timestamp, rule ID, and message for reporting
+# Extract time, rule ID, IP, and message from log lines
 while IFS= read -r LINE; do
     CLEAN_LINE=${LINE#*:}
 
@@ -38,15 +39,19 @@ while IFS= read -r LINE; do
 
     ID=$(echo "$CLEAN_LINE" | grep -oP '\[id "\K[0-9]+')
     MSG=$(echo "$CLEAN_LINE" | grep -oP '\[msg "\K[^"]+')
+    CLIENT_IP=$(echo "$LINE" | grep -oP '\[client \K[^\]]+')
 
-    if [[ -n "$ID" ]]; then
+    if [[ -n "$ID" && -n "$CLIENT_IP" ]]; then
+        COMBO_KEY="${ID}|${CLIENT_IP}"
+        if [[ -z "${UNIQUE_COMBO[$COMBO_KEY]}" ]]; then
+            UNIQUE_COMBO["$COMBO_KEY"]=1
+            ((UNIQUE_COUNT_BY_ID["$ID"]++))
+            ((TOTAL++))
+        fi
 
         if [[ -z "${MSG_ORIG[$ID]}" ]]; then
             MSG_ORIG["$ID"]="$MSG"
         fi
-
-        ((COUNT_BY_ID_MSG["$ID"]++))
-        ((TOTAL++))
     fi
 
     # Clean up log text for output
@@ -175,29 +180,20 @@ cat <<EOF > "$HTML"
         <tbody>
 EOF
             # Populate statistics table with counts and percentage bars
-            for ID in "${!COUNT_BY_ID_MSG[@]}"; do
-                COUNT=${COUNT_BY_ID_MSG[$ID]}
+            for ID in "${!UNIQUE_COUNT_BY_ID[@]}"; do
+                COUNT=${UNIQUE_COUNT_BY_ID[$ID]}
                 PERCENT=$(awk "BEGIN {printf \"%.1f\", $COUNT * 100 / $TOTAL}")
 
                 # Set width based on percent
                 read WIDTH COLOR <<<$(awk -v p="$PERCENT" 'BEGIN {
+                    if (p < 5) { w = 20; }
+                    else if (p < 10) { w = 25; }
+                    else if (p < 15) { w = 28; }
+                    else { w = int(30 + (p - 20) * 0.5); }
 
-                    # Width calculation: keep original logic with minimum widths for low percentages
-                    if (p < 5) {
-                        w = 20;
-                    } else if (p < 10) {
-                        w = 25;
-                    } else if (p < 15) {
-                        w = 28;
-                    } else {
-                        w = int(30 + (p - 20) * 0.5);
-                    }
-
-                    # Increase saturation with percent (max 80%)
                     s = 70 + int(p * 0.05);
                     if (s > 80) s = 80;
 
-                    # Decrease lightness with percent (min 35%)
                     l = 52 - int(p * 0.34);
                     if (l < 35) l = 35;
 
