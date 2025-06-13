@@ -62,6 +62,11 @@ while IFS= read -r LINE; do
     TABLE_ROWS+="<tr><td class=\"date-cell\">$LOG_DATE</td><td class=\"time-cell\">$LOG_TIME</td><td>$LOG_TEXT</td></tr>"
 done <<< "$LOG_LINES"
 
+# Exit if no statistics and no log rows
+if [[ ${#UNIQUE_COUNT_BY_ID[@]} -eq 0 && -z "$TABLE_ROWS" ]]; then
+    exit 0
+fi
+
 # Define inline CSS styles for progress bars
 read -r -d '' STYLE_PROGRESS <<EOF
     <style>
@@ -165,6 +170,11 @@ cat <<EOF > "$HTML"
     </style>
 </head>
 <body>
+EOF
+
+# Add statistics table only if there is data
+if [[ ${#UNIQUE_COUNT_BY_ID[@]} -gt 0 ]]; then
+    cat <<EOF >> "$HTML"
     <table>
         <thead>
             <tr class="title-row">
@@ -202,22 +212,28 @@ EOF
                 }')
 
                 MSG=${MSG_ORIG[$ID]}
-                echo "<tr>
-                    <td class=\"id-cell\">${ID}</td>
+                cat <<EOF >> "$HTML"
+                <tr>
+                    <td class="id-cell">${ID}</td>
                     <td>${MSG}</td>
-                    <td class=\"col-qty\">${COUNT}</td>
-                    <td class=\"progress-cell\">
-                        <div class=\"progress-container\">
-                            <div class=\"progress-bar\" style=\"width: ${WIDTH}%; background-color: ${COLOR};\">${PERCENT}%</div>
+                    <td class="col-qty">${COUNT}</td>
+                    <td class="progress-cell">
+                        <div class="progress-container">
+                            <div class="progress-bar" style="width: ${WIDTH}%; background-color: ${COLOR};">${PERCENT}%</div>
                         </div>
                     </td>
-                </tr>" >> "$HTML"
+                </tr>
+EOF
             done
+
+    cat <<EOF >> "$HTML"
+    </tbody>
+    </table>
+EOF
+fi
 
 # Insert detailed log entries table
 cat <<EOF>> "$HTML"
-        </tbody>
-    </table>
     <table>
         <thead>
             <tr class="title-row">
