@@ -196,18 +196,25 @@ EOF
 
                 # Set width based on percent
                 read WIDTH COLOR <<<$(awk -v p="$PERCENT" 'BEGIN {
+                    # Progress bar
                     if (p < 5) { w = 20; }
                     else if (p < 10) { w = 25; }
                     else if (p < 15) { w = 28; }
-                    else { w = int(30 + (p - 20) * 0.5); }
+                    else { w = int(30 + (p - 20) * 0.7); }
 
+                    # Color
                     s = 70 + int(p * 0.05);
                     if (s > 80) s = 80;
 
                     l = 52 - int(p * 0.34);
                     if (l < 35) l = 35;
 
-                    color = "hsl(120," s "%," l "%)";
+                    if (p >= 100) {
+                        w = 100;
+                        color = "hsl(120, 100%, 30%)";
+                    } else {
+                        color = "hsl(120," s "%," l "%)";
+                    }
                     print w, color;
                 }')
 
