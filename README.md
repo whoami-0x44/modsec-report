@@ -1,7 +1,7 @@
 # Nginx ModSecurity Log Parser with Email Report
-This is a lightweight bash script designed to parse Nginx's ModSecurity logs, generate a detailed HTML report, and send it via email. The script offers an easy-to-read overview of ModSecurity events, complete with graphical representations of event statistics and a detailed log list.
+This is a lightweight bash script designed to parse Nginx's ModSecurity logs, generate a detailed HTML report, and send it via email. It provides an easy-to-read overview of ModSecurity events with graphical statistics and a detailed log list, including a tooltip for IPs with repeated attempts.
 
-![Add script](<screen.png>)
+![Add script](screen.gif)
 
 ---
 

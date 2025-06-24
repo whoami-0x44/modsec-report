@@ -10,13 +10,13 @@ HTML=/tmp/modsec_report.html
 # Extract and clean relevant ModSecurity log lines for the target date
 LOG_LINES=$(grep "$DATE" $ERROR_LOG 2>/dev/null | \
             grep -E 'ModSecurity' | \
-            sed -e 's/\[file.*\[line "[0-9]*"\][[:space:]]*//g' \
+            sed -e 's/\[client [^]]*\]//g' \
+                -e 's/\[file.*\[line "[0-9]*"\][[:space:]]*//g' \
                 -e 's/\[rev "[0-9]*"\][[:space:]]*//g' \
                 -e 's/\[data "[0-9\.]*"\].*\[accuracy "[0-9]*"\]//g' \
-                -e 's/\[hostname ".*"\]//g' \
-                -e 's/\[tag "[^"]*"\]//g' \
-                -e 's/\[ref "[^"]*"\]//g' \
-                -e 's/[[:space:]]*,[[:space:]]*\(client\|server\|referrer\):[^,]*//g')
+                -e 's/[[:space:]]*\[hostname ".*"\]//g' \
+                -e 's/\[(tag|ref) "[^"]*"\]//g' \
+                -e 's/[[:space:]]*,[[:space:]]*\(server\|referrer\):[^,]*//g')
 
 # Exit if no log lines found
 if [ -z "$LOG_LINES" ]; then
@@ -27,10 +27,19 @@ fi
 declare -A UNIQUE_COMBO         # To store unique ID+IP keys
 declare -A UNIQUE_COUNT_BY_ID   # Final count per ID
 declare -A MSG_ORIG             # Original messages per ID
+declare -A IP_HIT_COUNT         # Count of hits per IP address
 TOTAL=0
 TABLE_ROWS=""
 
-# Extract time, rule ID, IP, and message from log lines
+# First pass — count the number of attempts per IP address
+while IFS= read -r LINE; do
+    CLIENT_IP=$(echo "$LINE" | grep -oP 'client: \K[^\s,]+')
+    if [[ -n "$CLIENT_IP" ]]; then
+        ((IP_HIT_COUNT["$CLIENT_IP"]++))
+    fi
+done <<< "$LOG_LINES"
+
+# Extract date, time, ID, message, and client IP
 while IFS= read -r LINE; do
     CLEAN_LINE=${LINE#*:}
 
@@ -39,27 +48,37 @@ while IFS= read -r LINE; do
 
     ID=$(echo "$CLEAN_LINE" | grep -oP '\[id "\K[0-9]+')
     MSG=$(echo "$CLEAN_LINE" | grep -oP '\[msg "\K[^"]+')
-    CLIENT_IP=$(echo "$LINE" | grep -oP '\[client \K[^\]]+')
 
-    if [[ -n "$ID" && -n "$CLIENT_IP" ]]; then
+    CLIENT_IP=$(echo "$LINE" | grep -oP 'client: \K[^\s,]+')
+    CLIENT_IP=$(echo "$CLIENT_IP" | xargs)
+
+    # Update counts for unique ID+IP combos and store message
+    if [[ -n "$CLIENT_IP" && -n "$ID" ]]; then
         COMBO_KEY="${ID}|${CLIENT_IP}"
         if [[ -z "${UNIQUE_COMBO[$COMBO_KEY]}" ]]; then
             UNIQUE_COMBO["$COMBO_KEY"]=1
             ((UNIQUE_COUNT_BY_ID["$ID"]++))
             ((TOTAL++))
         fi
-
-        if [[ -z "${MSG_ORIG[$ID]}" ]]; then
-            MSG_ORIG["$ID"]="$MSG"
-        fi
+        [[ -z "${MSG_ORIG[$ID]}" ]] && MSG_ORIG["$ID"]="$MSG"
     fi
 
     # Clean up log text for output
     LOG_TEXT=$(echo "$CLEAN_LINE" \
         | cut -d' ' -f3- \
         | sed -E 's/\[error\] [0-9]+#[0-9]+: \*[0-9]+ //')
+    TOOLTIP_HTML=""
 
-    TABLE_ROWS+="<tr><td class=\"date-cell\">$LOG_DATE</td><td class=\"time-cell\">$LOG_TIME</td><td>$LOG_TEXT</td></tr>"
+    if [[ -n "$CLIENT_IP" && ${IP_HIT_COUNT["$CLIENT_IP"]} -gt 1 ]]; then
+        TOOLTIP_HTML="<span class='tooltip-text'>IP: $CLIENT_IP<br>${IP_HIT_COUNT[$CLIENT_IP]} attempts</span>"
+    fi
+
+    # Append row to HTML table
+    TABLE_ROWS+="<tr class=\"log-row\">
+                     <td class=\"date-cell\">$LOG_DATE</td>
+                     <td class=\"time-cell\">$LOG_TIME</td>
+                     <td><div class=\"tooltip-wrapper\">$LOG_TEXT $TOOLTIP_HTML</div></td>
+                 </tr>"
 done <<< "$LOG_LINES"
 
 # Exit if no statistics and no log rows
@@ -67,8 +86,8 @@ if [[ ${#UNIQUE_COUNT_BY_ID[@]} -eq 0 && -z "$TABLE_ROWS" ]]; then
     exit 0
 fi
 
-# Define inline CSS styles for progress bars
-read -r -d '' STYLE_PROGRESS <<EOF
+# Define inline CSS styles
+read -r -d '' STYLE <<EOF
     <style>
         .progress-bar {
             height: 18px;
@@ -88,16 +107,7 @@ read -r -d '' STYLE_PROGRESS <<EOF
             border-radius: 8px;
             overflow: hidden;
         }
-    </style>
-EOF
 
-# Begin generating the HTML report
-cat <<EOF > "$HTML"
-<html>
-<head>
-    <meta charset="UTF-8">
-    $STYLE_PROGRESS
-    <style>
         table {
             border-collapse: separate;
             border-spacing: 0;
@@ -115,7 +125,6 @@ cat <<EOF > "$HTML"
             font-size: 1.3em;
             padding: 10px;
             border-radius: 6px 6px 0 0;
-            border: 1px #6795af;
         }
 
         thead tr.header-row th {
@@ -137,8 +146,7 @@ cat <<EOF > "$HTML"
             background-color: #ddeeff;
         }
 
-        td,
-        th {
+        td, th {
             text-align: left;
             padding: 8px 10px;
             font-family: monospace;
@@ -146,8 +154,7 @@ cat <<EOF > "$HTML"
             vertical-align: top;
         }
 
-        td.date-cell,
-        td.time-cell {
+        td.date-cell, td.time-cell {
             white-space: nowrap;
         }
 
@@ -167,27 +174,80 @@ cat <<EOF > "$HTML"
         .col-qty {
             text-align: center;
         }
+
+        .tooltip-wrapper {
+            position: relative;
+            display: inline-block;
+        }
+
+        .tooltip-text {
+            visibility: hidden;
+            background: #ffffff;
+            color: #333;
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-size: 0.9em;
+            font-family: sans-serif;
+            max-width: 250px;
+            white-space: nowrap;
+            display: inline-block;
+            position: absolute;
+            z-index: 1;
+            bottom: 110%;
+            left: 50%;
+            transform: translateX(-50%);
+            opacity: 0;
+            transition: opacity 0.3s ease, transform 0.3s ease;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+            border-top: 2px solid #67eef3;
+            border-right: 2px solid #67eef3;
+        }
+
+        .tooltip-wrapper:hover .tooltip-text {
+            visibility: visible;
+            opacity: 1;
+            transform: translateX(-50%) translateY(-10px);
+        }
+
+        .tooltip-text::after {
+            content: '';
+            position: absolute;
+            bottom: -10px;
+            left: 50%;
+            transform: translateX(-50%);
+            border-width: 10px;
+            border-style: solid;
+            border-color: transparent transparent #67eef3 transparent;
+        }
     </style>
-</head>
-<body>
+EOF
+
+# Begin generating the HTML report
+cat <<EOF > "$HTML"
+<html>
+    <head>
+        <meta charset="UTF-8">
+        $STYLE
+    </head>
+    <body>
 EOF
 
 # Add statistics table only if there is data
 if [[ ${#UNIQUE_COUNT_BY_ID[@]} -gt 0 ]]; then
     cat <<EOF >> "$HTML"
-    <table>
-        <thead>
-            <tr class="title-row">
-                <th colspan="5">📊 Statistics of Events for $DATE</th>
-            </tr>
-            <tr class="header-row">
-                <th>ID</th>
-                <th>Message</th>
-                <th class="col-qty">Qty</th>
-                <th>Chart</th>
-            </tr>
-        </thead>
-        <tbody>
+        <table>
+            <thead>
+                <tr class="title-row">
+                    <th colspan="5">📊 Statistics of Events for $DATE</th>
+                </tr>
+                <tr class="header-row">
+                    <th>ID</th>
+                    <th>Message</th>
+                    <th class="col-qty">Qty</th>
+                    <th>Chart</th>
+                </tr>
+            </thead>
+            <tbody>
 EOF
             # Populate statistics table with counts and percentage bars
             for ID in "${!UNIQUE_COUNT_BY_ID[@]}"; do
@@ -234,29 +294,29 @@ EOF
             done
 
     cat <<EOF >> "$HTML"
-    </tbody>
-    </table>
+            </tbody>
+        </table>
 EOF
 fi
 
 # Insert detailed log entries table
-cat <<EOF>> "$HTML"
-    <table>
-        <thead>
-            <tr class="title-row">
-                <th colspan="3">📝 ModSecurity Detailed Log Entries for $DATE</th>
-            </tr>
-            <tr class="header-row">
-                <th>Date</th>
-                <th>Time</th>
-                <th>Log</th>
-            </tr>
-        </thead>
-        <tbody>
-            $TABLE_ROWS
-        </tbody>
-    </table>
-</body>
+cat <<EOF >> "$HTML"
+        <table>
+            <thead>
+                <tr class="title-row">
+                    <th colspan="3">📝 ModSecurity Detailed Log Entries for $DATE</th>
+                </tr>
+                <tr class="header-row">
+                    <th>Date</th>
+                    <th>Time</th>
+                    <th>Log</th>
+                </tr>
+            </thead>
+            <tbody>
+                $TABLE_ROWS
+            </tbody>
+        </table>
+    </body>
 </html>
 EOF
 
